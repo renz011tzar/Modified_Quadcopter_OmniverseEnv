@@ -148,6 +148,11 @@ class RLTask(RLTaskInterface):
         # prepare tensors
         self.obs_buf = torch.zeros((self._num_envs, self.num_observations), device=self._device, dtype=torch.float)
         self.states_buf = torch.zeros((self._num_envs, self.num_states), device=self._device, dtype=torch.float)
+        if (self._num_envs<5000):
+            self.states_buf[:, 0] = 1
+        else:
+            self.states_buf[-3072:-2048, 1] = 1
+            self.states_buf[-2048:, 2] = 1
         self.rew_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.float)
         self.reset_buf = torch.ones(self._num_envs, device=self._device, dtype=torch.long)
         self.progress_buf = torch.zeros(self._num_envs, device=self._device, dtype=torch.long)
