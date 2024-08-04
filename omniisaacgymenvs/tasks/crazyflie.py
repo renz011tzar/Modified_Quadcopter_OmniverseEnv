@@ -20,7 +20,7 @@ class CrazyflieTask(RLTask):
         self._num_observations = 18
         self._num_actions = 4
 
-        self._crazyflie_position = torch.tensor([0, 0, 3.0])
+        self._crazyflie_position = torch.tensor([0, 0, 1.0])
         self._ball_position = torch.tensor([0, 0, 1.0])
 
         RLTask.__init__(self, name=name, env=env)
@@ -444,23 +444,13 @@ class CrazyflieTask(RLTask):
         quaternion_reward = torch.exp(-quat_temp * quat_variation ** 2)
         '''
 
-        curiosity_vector=root_quats[:,2]
-        # Convert boolean to decimal (BIN2DEC)
-        self.bucket_ids = self.get_ID_quaternion_w(curiosity_vector)
-        # Update bucket occurrences
-        self.update_bucket_occurrences(self.bucket_ids)
-        curiosity_reward = self.get_curiosity_reward(self.bucket_ids)
-
         flipping_reward=position_reward+stability_reward
-        flipping_reward+= 10000*curiosity_reward
-
-        self.episode_sums["curiosity_reward"]+=curiosity_reward
 
         return flipping_reward
     
     def _calculate_hovering_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state_3):
         position_temp = 1.0  # Lower temperature to widen the effective range
-        spin_temp = 1.0
+        spin_temp = 0.1
 
         # pos reward
         target_dist = torch.norm(target_positions - root_positions, dim=-1)
@@ -502,7 +492,7 @@ class CrazyflieTask(RLTask):
         # Get the number of visits for each bucket ID
         visits = self.episode_sums["bucket_occurrences"].gather(1, bucket_ids.unsqueeze(1)).squeeze(1)
         # Calculate the curiosity reward
-        r_curi = 1.0 / visits.float()**3 
+        r_curi = 1.0 / visits.float()**4 
         return r_curi
     
     def get_count(self,state_boolean_1, state_boolean_2, state_boolean_3):
@@ -551,6 +541,7 @@ class CrazyflieTask(RLTask):
         root_quats = self.root_rot
 
         target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
+        #target_positions[:, 1] = 1
         target_positions[:, 2] = 3
         self.target_positions=target_positions
 
@@ -588,8 +579,18 @@ class CrazyflieTask(RLTask):
 
         success_reward=zeros
         end_on_state_3=(self.progress_buf==self._max_episode_length - 2)&(state_boolean_3)
-        success_reward=torch.where(end_on_state_3, 10000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), success_reward)
+        success_reward=torch.where(end_on_state_3, 100000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), success_reward)
         self.rew_buf[:] += success_reward
+
+        curiosity_vector=root_quats[:,2]
+        # Convert boolean to decimal (BIN2DEC)
+        self.bucket_ids = self.get_ID_quaternion_w(curiosity_vector)
+        # Update bucket occurrences
+        self.update_bucket_occurrences(self.bucket_ids)
+        curiosity_reward = self.get_curiosity_reward(self.bucket_ids)
+        self.rew_buf[:]+= 10000*curiosity_reward
+
+        self.episode_sums["curiosity_reward"]+=curiosity_reward
 
         self.episode_sums["states_visited"]+=states_visited
 
