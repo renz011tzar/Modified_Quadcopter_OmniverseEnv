@@ -17,7 +17,7 @@ class CrazyflieTask(RLTask):
     def __init__(self, name, sim_config, env, offset=None) -> None:
         self.update_config(sim_config)
 
-        self._num_observations = 18
+        self._num_observations = 21
         self._num_actions = 4
 
         self._crazyflie_position = torch.tensor([0, 0, 1.0])
@@ -130,6 +130,7 @@ class CrazyflieTask(RLTask):
         for i in range(4):
             scene.add(self._copters.physics_rotors[i])
 
+    '''
     def get_crazyflie_positions(self):
         positions = torch.zeros((self._num_envs, 3), device=self._device)
         
@@ -140,6 +141,7 @@ class CrazyflieTask(RLTask):
         positions[1024:] = torch.tensor([0, 0, 3.0], device=self._device)
         
         return positions
+    '''
     
     def get_crazyflie(self):
         copter = Crazyflie(
@@ -179,14 +181,18 @@ class CrazyflieTask(RLTask):
         root_linvels = self.root_velocities[:, :3]
         root_angvels = self.root_velocities[:, 3:]
 
-        self.obs_buf[..., 0:3] = self.target_positions - root_positions
+        self.obs_buf[..., 0] = self.target_positions[...,2] - root_positions[...,2]
 
-        self.obs_buf[..., 3:6] = rot_x
-        self.obs_buf[..., 6:9] = rot_y
-        self.obs_buf[..., 9:12] = rot_z
+        self.obs_buf[..., 1:5] = self.actions
 
-        self.obs_buf[..., 12:15] = root_linvels
-        self.obs_buf[..., 15:18] = root_angvels
+        self.obs_buf[..., 5:8] = rot_x
+        self.obs_buf[..., 8:11] = rot_y
+        self.obs_buf[..., 11:14] = rot_z
+
+        self.obs_buf[..., 14:17] = root_linvels
+        self.obs_buf[..., 17:20] = root_angvels
+
+        self.obs_buf[..., 20] = self.states_buf[...,0]+2*self.states_buf[...,1]+3*self.states_buf[...,2]
 
         observations = {self._copters.name: {"obs_buf": self.obs_buf}}
         return observations
@@ -333,6 +339,11 @@ class CrazyflieTask(RLTask):
     def set_targets(self, env_ids):
         num_sets = len(env_ids)
         envs_long = env_ids.long()
+
+        # set target position randomly with x, y in (0, 0) and z in (2)
+        self.target_positions[envs_long, 0:2] = torch.zeros((num_sets, 2), device=self._device)
+        self.target_positions[envs_long, 2] = torch.ones(num_sets, device=self._device) * 2.0
+
         # shift the target up so it visually aligns better
         ball_pos = self.target_positions[envs_long] + self._env_pos[envs_long]
         ball_pos[:, 2] += 0.0
@@ -514,6 +525,7 @@ class CrazyflieTask(RLTask):
         return task_reward_1, task_reward_2
     
     def get_states(self):
+        self.prev_states_buf=self.states_buf.clone()
         root_positions = self.root_pos - self._env_pos
         target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
         target_positions[:, 2] = 3
@@ -572,7 +584,7 @@ class CrazyflieTask(RLTask):
         self.episode_sums["hovering_reward"]+=hovering_reward
 
         states= self.states_buf.clone()
-        states_visited= states.sum(-1)
+        states_visited= states[...,0]+2*states[...,1]+3*states[...,2]
 
         # Update rewards based on state buffer
         self.rew_buf[:]  = approaching_target_reward+task_reward_1*flipping_reward+task_reward_2*hovering_reward 
@@ -589,6 +601,11 @@ class CrazyflieTask(RLTask):
         self.update_bucket_occurrences(self.bucket_ids)
         curiosity_reward = self.get_curiosity_reward(self.bucket_ids)
         self.rew_buf[:]+= 10000*curiosity_reward
+
+        # effort reward
+        effort = torch.square(self.actions).sum(-1)
+        effort_reward = 0.05 * torch.exp(-0.5 * effort)
+        self.rew_buf[:]-=effort_reward
 
         self.episode_sums["curiosity_reward"]+=curiosity_reward
 
