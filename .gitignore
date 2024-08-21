@@ -4,4 +4,4 @@ runs
 omniisaacgymenvs.egg-info/
 checkpoints
 omniisaacgymenvs/wandb
-ignore-this-folder/
+omniisaacgymenvs/runs/Crazyflie/nn

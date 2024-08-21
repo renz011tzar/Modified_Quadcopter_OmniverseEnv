@@ -147,6 +147,7 @@ class RLTask(RLTaskInterface):
 
         # prepare tensors
         self.obs_buf = torch.zeros((self._num_envs, self.num_observations), device=self._device, dtype=torch.float)
+        self.prev_states_buf= torch.zeros((self._num_envs, self.num_states), device=self._device, dtype=torch.float)
         self.states_buf = torch.zeros((self._num_envs, self.num_states), device=self._device, dtype=torch.float)
         if (self._num_envs<5000):
             self.states_buf[:, 0] = 1
@@ -305,6 +306,7 @@ class RLTaskWarp(RLTask):
         """Prepares torch buffers for RL data collection."""
         # prepare tensors
         self.obs_buf = wp.zeros((self._num_envs, self.num_observations), device=self._device, dtype=wp.float32)
+        self.prev_states_buf= torch.zeros((self._num_envs, self.num_states), device=self._device, dtype=torch.float)
         self.states_buf = wp.zeros((self._num_envs, self.num_states), device=self._device, dtype=wp.float32)
         self.rew_buf = wp.zeros(self._num_envs, device=self._device, dtype=wp.float32)
         self.reset_buf = wp_utils.ones(self._num_envs, device=self._device, dtype=wp.int32)
