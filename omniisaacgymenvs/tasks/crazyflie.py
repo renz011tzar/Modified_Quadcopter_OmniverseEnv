@@ -175,7 +175,7 @@ class CrazyflieTask(RLTask):
         root_angvels = self.root_velocities[:, 3:]
 
         target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
-        target_positions[:, 2] = 3
+        target_positions[:, 2] = 2.5
         self.obs_buf[..., 0] = target_positions[...,2] - root_positions[...,2]
 
         self.obs_buf[..., 1:5] = self.actions
@@ -295,7 +295,7 @@ class CrazyflieTask(RLTask):
         self.prop_max_rot = 433.3
 
         self.target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
-        self.target_positions[:, 2] = 3
+        self.target_positions[:, 2] = 2.5
 
         self.target_quats = torch.zeros((self._num_envs, 4), device=self._device, dtype=torch.float32)
         self.target_quats[:, 2] = 1
@@ -344,7 +344,7 @@ class CrazyflieTask(RLTask):
 
         # set target position randomly with x, y in (0, 0) and z in (2)
         self.target_positions[envs_long, 0:2] = torch.zeros((num_sets, 2), device=self._device)
-        self.target_positions[envs_long, 2] = torch.ones(num_sets, device=self._device) * 6.0
+        self.target_positions[envs_long, 2] = torch.ones(num_sets, device=self._device) * 5.0
 
         # shift the target up so it visually aligns better
         ball_pos = self.target_positions[envs_long] + self._env_pos[envs_long]
@@ -388,7 +388,7 @@ class CrazyflieTask(RLTask):
     def _check_flip_completion(self):
         root_quats = self.root_rot
         # Update the position reached indicator
-        successful_flip_threshold = 0.05  # Stricter threshold for flip completion
+        successful_flip_threshold = 0.1  # Stricter threshold for flip completion
         is_upright = (torch.abs(root_quats[:, 0] - 1) < successful_flip_threshold) | (torch.abs(root_quats[:, 0] + 1) < successful_flip_threshold)
         is_upside_down = (torch.abs(root_quats[:, 2] - 1) < successful_flip_threshold) | (torch.abs(root_quats[:, 2] + 1) < successful_flip_threshold)
         is_upright = is_upright.float()
@@ -415,11 +415,11 @@ class CrazyflieTask(RLTask):
             2*torch.ones((self._num_envs), device=self._device, dtype=torch.float32),
             self.episode_sums["successful_flip_count"]
         )
-        return end_indicator
+        return double_flip
 
     def _check_up_position(self):
         root_quats = self.root_rot  
-        up_threshold = 0.05  
+        up_threshold = 0.1  
 
         # Extract the Z-axis direction vectors from the quaternions
         is_upright = (torch.abs(root_quats[:, 0] - 1) < up_threshold) | (torch.abs(root_quats[:, 0] + 1) < up_threshold)
@@ -440,30 +440,19 @@ class CrazyflieTask(RLTask):
         self.episode_sums["up_count"] = up_count
 
         return up_count
-    
-    def _calculate_approaching_target_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state_1):
+
+    def _calculate_approaching_target_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state):
         position_temp = 1.0  # Lower temperature to widen the effective range
-        spin_temp = 1.0
 
         # pos reward
         target_dist = torch.norm(target_positions - root_positions, dim=-1)
         position_error = target_dist
         position_reward = torch.exp(-position_temp * position_error ** 2)
-        
-        spin = torch.abs(root_angvels).sum(-1)
-        spin_reward = torch.exp(-spin_temp * spin)
 
-        ups = quat_axis(root_quats, 2)
-        self.orient_z = ups[..., 2]
-        up_reward = torch.clamp(ups[..., 2], min=0.0, max=1.0)
+        # Add the time penalty if desired
+        total_reward = position_reward
 
-        # combined reward
-        reward = position_reward + up_reward + spin_reward
-
-        approaching_target_reward=reward
-
-        return approaching_target_reward
-    
+        return total_reward
 
     def _calculate_flipping_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state_2):
         position_temp = 1.0  # Lower temperature to widen the effective range
@@ -481,29 +470,32 @@ class CrazyflieTask(RLTask):
         return flipping_reward
     
     def _calculate_hovering_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state_3):
-        position_temp = 1.0  # Lower temperature to widen the effective range
         spin_temp = 0.1
+        position_temp = 1.0  # Lower temperature to widen the effective range
 
-        # pos reward
-        target_dist = torch.norm(target_positions - root_positions, dim=-1)
-        position_error = target_dist
-        position_reward = torch.exp(-position_temp * position_error ** 2)
+        # Calculate the direction vector from the drone to the target
+        direction_to_target = target_positions - root_positions
+        direction_to_target = torch.nn.functional.normalize(direction_to_target, dim=-1)
 
-        stability_penalty = torch.norm(root_linvels, dim=-1) 
-        stability_reward = torch.exp(-position_temp * stability_penalty ** 2)
-        
+        # Calculate the distance to the target
+        distance_to_target = torch.norm(target_positions - root_positions, dim=-1)
+
+        # Reward for getting closer to the target
+        proximity_reward = torch.exp(-position_temp * distance_to_target ** 2)
+
+        # Reward for staying at the target (small distance and low velocity)
+        stay_reward = torch.exp(-distance_to_target) * torch.exp(-torch.norm(root_linvels, dim=-1))
+
         spin = torch.abs(root_angvels).sum(-1)
         spin_reward = 10*torch.exp(-spin_temp * spin)
 
         ups = quat_axis(root_quats, 2)
         up_reward = torch.clamp(ups[..., 2], min=0.0, max=1.0)
 
-        # combined reward
-        reward = position_reward + up_reward + spin_reward
+        # Combine the alignment, proximity, and stay rewards
+        total_reward = proximity_reward + stay_reward + spin_reward + up_reward
 
-        hovering_reward=reward
-
-        return hovering_reward+stability_reward
+        return total_reward
 
     def get_ID_quaternion_w(self, input):
         quaternions_normalized = self.normalize_observations(input, math.pi)
@@ -524,12 +516,11 @@ class CrazyflieTask(RLTask):
         # Get the number of visits for each bucket ID
         visits = self.episode_sums["bucket_occurrences"].gather(1, bucket_ids.unsqueeze(1)).squeeze(1)
 
-        # Calculate the curiosity reward
-        r_curi = 1.0 / (visits.float()**6+EPS)
-
         # Apply condition to return 0 if state_boolean_1 is True
         state_boolean_1 = (self.states_buf[:, 0] == 1)
-        r_curi[state_boolean_1] = 0.0
+        
+        zeros=torch.zeros(self._num_envs, device=self._device, dtype=torch.float32)
+        r_curi=torch.where(state_boolean_1, zeros, 1.0 / (visits.float()**4))
 
         return r_curi
     
@@ -555,7 +546,7 @@ class CrazyflieTask(RLTask):
         self.prev_states_buf=self.states_buf.clone()
         root_positions = self.root_pos - self._env_pos
         target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
-        target_positions[:, 2] = 3
+        target_positions[:, 2] = 2.5
         target_dist = torch.norm(target_positions - root_positions, dim=-1)
         state_1=torch.tensor([1, 0, 0], device=self._device, dtype=torch.float)
         state_2=torch.tensor([0, 1, 0], device=self._device, dtype=torch.float)
@@ -582,7 +573,7 @@ class CrazyflieTask(RLTask):
 
         target_positions = torch.zeros((self._num_envs, 3), device=self._device, dtype=torch.float32)
         #target_positions[:, 1] = 1
-        target_positions[:, 2] = 3
+        target_positions[:, 2] = 2.5
         self.target_positions=target_positions
 
         target_dist = torch.norm(target_positions - root_positions, dim=-1)
@@ -615,7 +606,7 @@ class CrazyflieTask(RLTask):
         states_visited= states[...,0]+2*states[...,1]+3*states[...,2]
 
         # Update rewards based on state buffer
-        self.rew_buf[:]  = approaching_target_reward+100*task_reward_1*flipping_reward+1000*task_reward_2*hovering_reward 
+        self.rew_buf[:]  = approaching_target_reward+10*task_reward_1*flipping_reward+200*task_reward_2*hovering_reward 
 
         success_reward=zeros
         end_on_state_3=(self.progress_buf==self._max_episode_length - 2)&(state_boolean_3)
@@ -624,12 +615,12 @@ class CrazyflieTask(RLTask):
 
         first_transition_success=zeros
         end_on_state_1=(self.prev_states_buf[:,0]==1)&(self.states_buf[:,1]==1)
-        first_transition_success=torch.where(end_on_state_1, 10000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), first_transition_success)
+        first_transition_success=torch.where(end_on_state_1, 1000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), first_transition_success)
         self.rew_buf[:] += first_transition_success
 
         second_transition_success=zeros
         end_on_state_2=(self.prev_states_buf[:,1]==1)&(self.states_buf[:,2]==1)
-        second_transition_success=torch.where(end_on_state_2, 100000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), second_transition_success)
+        second_transition_success=torch.where(end_on_state_2, 10000*torch.ones(self._num_envs, device=self._device, dtype=torch.float), second_transition_success)
         self.rew_buf[:] += second_transition_success
 
         curiosity_vector=root_quats[:,2]
@@ -643,7 +634,7 @@ class CrazyflieTask(RLTask):
 
         # effort reward
         effort = torch.square(self.actions).sum(-1)
-        effort_reward = 0.5 * torch.exp(-0.5 * effort)
+        effort_reward =0.05 * torch.exp(-0.5 * effort)
         self.rew_buf[:]-=effort_reward
 
         self.episode_sums["curiosity_reward"]+=curiosity_reward
