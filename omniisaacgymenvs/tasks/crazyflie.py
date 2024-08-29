@@ -21,7 +21,7 @@ class CrazyflieTask(RLTask):
         self._num_actions = 4
 
         self._crazyflie_position = torch.tensor([0, 0, 1.0])
-        self._ball_position = torch.tensor([0, 0, 3.0])
+        self._ball_position = torch.tensor([0, 0, 2.5])
 
         RLTask.__init__(self, name=name, env=env)
 
@@ -146,7 +146,7 @@ class CrazyflieTask(RLTask):
         )
 
     def get_target(self):
-        radius = 0.01
+        radius = 0.05
         color = torch.tensor([1, 0, 0])
         ball = DynamicSphere(
             prim_path=self.default_zero_env_path + "/ball",
@@ -321,6 +321,7 @@ class CrazyflieTask(RLTask):
             "up_count":torch_zeros(),
             "end_double_flip":torch_zeros(),
             "effort_reward":torch_zeros(),
+            "raw_distance":torch_zeros(),
         }
 
         self.root_pos, self.root_rot = self._copters.get_world_poses()
@@ -452,7 +453,7 @@ class CrazyflieTask(RLTask):
         # Add the time penalty if desired
         total_reward = position_reward
 
-        return total_reward
+        return total_reward/torch.sqrt(time_in_state+1)
 
     def _calculate_flipping_reward(self, target_positions, root_positions, root_angvels, root_linvels, root_quats, time_in_state_2):
         position_temp = 1.0  # Lower temperature to widen the effective range
@@ -606,7 +607,7 @@ class CrazyflieTask(RLTask):
         states_visited= states[...,0]+2*states[...,1]+3*states[...,2]
 
         # Update rewards based on state buffer
-        self.rew_buf[:]  = approaching_target_reward+10*task_reward_1*flipping_reward+200*task_reward_2*hovering_reward 
+        self.rew_buf[:]  = approaching_target_reward+20*task_reward_1*flipping_reward+200*task_reward_2*hovering_reward 
 
         success_reward=zeros
         end_on_state_3=(self.progress_buf==self._max_episode_length - 2)&(state_boolean_3)
@@ -630,16 +631,17 @@ class CrazyflieTask(RLTask):
         self.update_bucket_occurrences(self.bucket_ids)
         curiosity_reward=zeros
         curiosity_reward = torch.where(state_boolean_1, curiosity_reward, self.get_curiosity_reward(self.bucket_ids))
-        self.rew_buf[:]+= 100*curiosity_reward
+        self.rew_buf[:]+= 200*curiosity_reward
 
         # effort reward
         effort = torch.square(self.actions).sum(-1)
-        effort_reward =0.05 * torch.exp(-0.5 * effort)
+        effort_reward =0.1 * torch.exp(-0.5 * effort)
         self.rew_buf[:]-=effort_reward
 
         self.episode_sums["curiosity_reward"]+=curiosity_reward
         self.episode_sums["effort_reward"]+=effort_reward
         self.episode_sums["states_visited"]+=states_visited
+        self.episode_sums["raw_distance"]+=target_dist
 
         print(torch.sum(self.states_buf, dim=0))
 
