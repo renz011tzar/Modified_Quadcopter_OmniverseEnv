@@ -639,6 +639,7 @@ class CrazyflieTask(RLTask):
         self.states_buf[approaching_target_mask] = state_2
 
         flip_completed = self._check_flip_completion()
+        print(flip_completed)
         flipping_mask = (self.states_buf[:, 0] == 0) & (self.states_buf[:, 1] == 1) & flip_completed
         self.states_buf[flipping_mask] = state_3
 
