@@ -80,6 +80,7 @@ class CrazyflieTask(RLTask):
         self._cfg = sim_config.config
         self._task_cfg = sim_config.task_config
         self._num_states=3
+        self._num_agents = 4
 
         self._num_envs = self._task_cfg["env"]["numEnvs"]
         self._env_spacing = self._task_cfg["env"]["envSpacing"]
@@ -101,8 +102,8 @@ class CrazyflieTask(RLTask):
 
         # thrust max
         normal_dist_random = random.gauss(0, 1)  # Mean = 0, Std Dev = 1
-        self.mass = 0.031 + 0.003 * normal_dist_random
-        self.thrust_to_weight = 1.77 + 0.02 * normal_dist_random
+        self.mass = 0.031 + 0.001 * normal_dist_random
+        self.thrust_to_weight = 1.77 + 0.01 * normal_dist_random
 
         self.motor_assymetry = np.array([1.0, 1.0, 1.0, 1.0])
         # re-normalizing to sum-up to 4
@@ -176,8 +177,8 @@ class CrazyflieTask(RLTask):
 
         # Define noise standard deviation
         position_noise_std = 0.01
-        velocity_noise_std = 0.1
-        action_noise_std = 0.0
+        velocity_noise_std = 0.01
+        action_noise_std = 0.01
         quat_noise_std = 0.01
 
         # Adding noise to target positions and root positions
@@ -297,6 +298,12 @@ class CrazyflieTask(RLTask):
 
         # Determine max thrust based on conditions
         thrusts = self.pwm_to_f(pwm_cmds)
+
+        # Generate random factors in the range [0.8, 1.2] with the same shape as 'thrusts'
+        random_factors = torch.rand(thrusts.shape, device=thrusts.device) * 0.02 + 0.99  # Uniform distribution between 0.8 and 1.2
+
+        # Element-wise multiplication
+        thrusts = thrusts * random_factors
         thrusts_copy = thrusts.clone().detach()
 
         grav=torch.tensor([0,0,self.grav_z], device=self._device, dtype=torch.float32)
@@ -336,14 +343,16 @@ class CrazyflieTask(RLTask):
         self.thrusts[:, 2] = torch.squeeze(mod_thrusts_2)
         self.thrusts[:, 3] = torch.squeeze(mod_thrusts_3)
 
-
-
         # clear actions for reset envs
         self.thrusts[reset_env_ids] = 0
 
-        # spin spinning rotors
         prop_rot = self.thrust_to_rpm(thrusts_copy)
-        prop_rot = prop_rot * random.uniform(0.8, 1.2)
+
+        # Generate random factors with the same shape as 'prop_rot' using torch
+        random_factors = torch.rand(prop_rot.shape, device=prop_rot.device) * 0.02 + 0.99  # Uniform distribution between 0.8 and 1.2
+
+        # Element-wise multiplication
+        prop_rot = prop_rot * random_factors
 
         self.dof_vel[:, 0] = prop_rot[:, 0]
         self.dof_vel[:, 1] = -1.0 * prop_rot[:, 1]
@@ -635,7 +644,7 @@ class CrazyflieTask(RLTask):
         self.states_buf[initial] = state_1
         
         up_check = (self._check_up_position()==1)
-        approaching_target_mask = (target_dist < 0.1) & (self.states_buf[:, 0] == 1) & up_check
+        approaching_target_mask = (target_dist < 0.3) & (self.states_buf[:, 0] == 1) & up_check
         self.states_buf[approaching_target_mask] = state_2
 
         flip_completed = self._check_flip_completion()
@@ -686,7 +695,7 @@ class CrazyflieTask(RLTask):
         states_visited= states[...,0]+2*states[...,1]+3*states[...,2]
 
         # Update rewards based on state buffer
-        self.rew_buf[:]  = approaching_target_reward+25*task_reward_1*flipping_reward+600*task_reward_2*hovering_reward 
+        self.rew_buf[:]  = approaching_target_reward+25*task_reward_1*flipping_reward+750*task_reward_2*hovering_reward 
 
         first_transition_success=zeros
         end_on_state_1=(self.prev_states_buf[:,0]==1)&(self.states_buf[:,1]==1)
