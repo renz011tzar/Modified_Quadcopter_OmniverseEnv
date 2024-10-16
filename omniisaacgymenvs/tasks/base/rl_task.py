@@ -120,7 +120,7 @@ class RLTask(RLTaskInterface):
         self.is_extension = False
 
         if not hasattr(self, "_num_agents"):
-            self._num_agents = 1  # used for multi-agent environments
+            self._num_agents = 2  # used for multi-agent environments
         if not hasattr(self, "_num_states"):
             self._num_states = 0
 

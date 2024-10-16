@@ -80,7 +80,7 @@ class CrazyflieTask(RLTask):
         self._cfg = sim_config.config
         self._task_cfg = sim_config.task_config
         self._num_states=3
-        self._num_agents = 4
+        self._num_agents = 2
 
         self._num_envs = self._task_cfg["env"]["numEnvs"]
         self._env_spacing = self._task_cfg["env"]["envSpacing"]
@@ -497,6 +497,9 @@ class CrazyflieTask(RLTask):
             2*torch.ones((self._num_envs), device=self._device, dtype=torch.float32),
             self.episode_sums["successful_flip_count"]
         )
+
+
+
         return double_flip
 
     def _check_up_position(self):
